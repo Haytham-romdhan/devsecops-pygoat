@@ -3,64 +3,89 @@ name: CI
 on: [push]
 
 jobs:
-
   sast_scan:
     name: Run Bandit Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.8"
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
 
-      - name: Install Bandit
-        run: pip install bandit
+    - name: Install Bandit
+      run: pip install bandit
 
-      - name: Run Bandit Scan
-        run: bandit -ll -ii -r . -f json -o bandit-report.json || true
+    # -------------------------
+    # Run Bandit Scan
+    # -------------------------
+    - name: Run Bandit Scan (JSON)
+      run: |
+        bandit -ll -ii -r . -f json -o bandit-report.json || true
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: bandit-findings
-          path: bandit-report.json
+    - name: Run Bandit Scan (TXT readable)
+      run: |
+        bandit -ll -ii -r . -f txt -o bandit-report.txt || true
 
+    - name: Upload Bandit Artifact
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: bandit-findings
+        path: |
+          bandit-report.json
+          bandit-report.txt
 
   image_scan:
     name: Build Image and Run Image Scan
     runs-on: ubuntu-latest
     needs: sast_scan
-    if: always()   # make sure job runs even if Bandit finds issues
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v2
 
-      - name: Verify Docker is available
-        run: |
-          docker --version
-          docker info
+    # -------------------------
+    # Build Docker image
+    # -------------------------
+    - name: Build Docker Image
+      run: docker build -f Dockerfile -t myapp:latest .
 
-      - name: Build Docker Image
-        run: docker build -f Dockerfile -t myapp:latest .
+    # -------------------------
+    # Docker Scout Scan
+    # -------------------------
+    - name: Docker Scout Scan
+      uses: docker/scout-action@v1.0.9
+      with:
+        dockerhub-user: ${{ secrets.REPO_USER }}
+        dockerhub-password: ${{ secrets.REPO_PWD }}
+        command: quickview,cves
+        only-severities: critical,high
+        sarif-file: scout-report.sarif
+        json-file: scout-report.json
 
-      - name: Docker Scout Scan
-        uses: docker/scout-action@v1.0.9
-        with:
-          dockerhub-user: ${{ secrets.REPO_USER }}
-          dockerhub-password: ${{ secrets.REPO_PWD }}
-          command: quickview,cves
-          only-severities: critical,high
-          sarif-file: scout-report.sarif
+    # -------------------------
+    # Convert Docker Scout JSON to readable TXT
+    # -------------------------
+    - name: Convert JSON to readable text report
+      run: |
+        if [ -f scout-report.json ]; then
+          jq -r '.vulnerabilities[] |
+            "CVE: \(.cve)\nSeverity: \(.severity)\nPackage: \(.package)\nVersion: \(.version)\n------"
+          ' scout-report.json > scout-report.txt
+        else
+          echo "No vulnerabilities found" > scout-report.txt
+        fi
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: docker-scout-findings
-          path: scout-report.sarif
+    - name: Upload Docker Scout Artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: docker-scout-findings
+        path: |
+          scout-report.sarif
+          scout-report.json
+          scout-report.txt
