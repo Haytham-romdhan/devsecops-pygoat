@@ -8,36 +8,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: 3.8
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.10
 
-    - name: Install Bandit
-      run: pip install bandit
+      - name: Install Bandit
+        run: pip install bandit
 
-    # -------------------------
-    # Run Bandit Scan
-    # -------------------------
-    - name: Run Bandit Scan (JSON)
-      run: |
-        bandit -ll -ii -r . -f json -o bandit-report.json || true
+      # Run Bandit and always continue
+      - name: Run Bandit Scan (JSON)
+        run: bandit -ll -ii -r . -f json -o bandit-report.json || true
 
-    - name: Run Bandit Scan (TXT readable)
-      run: |
-        bandit -ll -ii -r . -f txt -o bandit-report.txt || true
+      - name: Run Bandit Scan (TXT readable)
+        run: bandit -ll -ii -r . -f txt -o bandit-report.txt || true
 
-    - name: Upload Bandit Artifacts
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: bandit-findings
-        path: |
-          bandit-report.json
-          bandit-report.txt
+      - name: Upload Bandit Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-findings
+          path: |
+            bandit-report.json
+            bandit-report.txt
 
   image_scan:
     name: Build Image and Run Image Scan
@@ -45,50 +41,48 @@ jobs:
     needs: sast_scan
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Verify Docker
-      run: |
-        docker --version
-        docker info
+      - name: Set up Docker
+        uses: docker-practice/actions-setup-docker@v1
+        with:
+          docker_version: '24.0.0'
 
-    - name: Build Docker Image
-  run: docker build -t myapp:latest .
+      - name: Build Docker Image
+        run: docker build -t myapp:latest .
 
-- name: List Docker images
-  run: docker images
+      - name: List Docker images
+        run: docker images
 
-- name: Docker Scout Scan
-  uses: docker/scout-action@v1.0.9
-  with:
-    dockerhub-user: ${{ secrets.REPO_USER }}
-    dockerhub-password: ${{ secrets.REPO_PWD }}
-    image: myapp:latest
-    command: quickview,cves
-    only-severities: critical,high
-    sarif-file: scout-report.sarif
-    json-file: scout-report.json
+      - name: Docker Scout Scan
+        uses: docker/scout-action@v1.0.9
+        with:
+          dockerhub-user: ${{ secrets.REPO_USER }}
+          dockerhub-password: ${{ secrets.REPO_PWD }}
+          image: myapp:latest
+          command: quickview,cves
+          only-severities: critical,high
+          sarif-file: scout-report.sarif
+          json-file: scout-report.json
 
+      - name: Generate readable vulnerabilities report
+        run: |
+          if [ -f scout-report.json ]; then
+            jq -r '
+              .vulnerabilities[] |
+              "CVE: \(.cve)\nSeverity: \(.severity)\nPackage: \(.package)\nVersion: \(.version)\n----"
+            ' scout-report.json > scout-report.txt
+          else
+            echo "No vulnerabilities found" > scout-report.txt
+          fi
 
-    # Create human-readable TXT report
-    - name: Generate readable vulnerabilities report
-      run: |
-        if [ -f scout-report.json ]; then
-          jq -r '
-            .vulnerabilities[] |
-            "CVE: \(.cve)\nSeverity: \(.severity)\nPackage: \(.package)\nVersion: \(.version)\n----"
-          ' scout-report.json > scout-report.txt
-        else
-          echo "No vulnerabilities found" > scout-report.txt
-        fi
-
-    - name: Upload Docker Scout Artifacts
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: docker-scout-findings
-        path: |
-          scout-report.sarif
-          scout-report.json
-          scout-report.txt
+      - name: Upload Docker Scout Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: docker-scout-findings
+          path: |
+            scout-report.sarif
+            scout-report.json
+            scout-report.txt
