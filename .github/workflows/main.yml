@@ -1,27 +1,92 @@
-FROM python:3.11-slim
+name: CI
 
-WORKDIR /app
+on: [push]
 
-RUN apt-get update && \
-    apt-get install --no-install-recommends -y \
-        dnsutils \
-        libpq-dev \
-        python3-dev && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+jobs:
+  sast_scan:
+    name: Run Bandit Scan
+    runs-on: ubuntu-latest
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-COPY requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.8
 
-COPY . /app/
+    - name: Install Bandit
+      run: pip install bandit
 
-EXPOSE 8000
+    # -------------------------
+    # Run Bandit Scan
+    # -------------------------
+    - name: Run Bandit Scan (JSON)
+      run: |
+        bandit -ll -ii -r . -f json -o bandit-report.json || true
 
-RUN python /app/manage.py migrate
+    - name: Run Bandit Scan (TXT readable)
+      run: |
+        bandit -ll -ii -r . -f txt -o bandit-report.txt || true
 
-WORKDIR /app/pygoat/
+    - name: Upload Bandit Artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: bandit-findings
+        path: |
+          bandit-report.json
+          bandit-report.txt
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers","6", "pygoat.wsgi"]
+  image_scan:
+    name: Build Image and Run Image Scan
+    runs-on: ubuntu-latest
+    needs: sast_scan
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Verify Docker
+      run: |
+        docker --version
+        docker info
+
+    - name: Build Docker Image
+      run: docker build -f Dockerfile -t myapp:latest .
+
+    # -------------------------
+    # Docker Scout Scan
+    # -------------------------
+    - name: Docker Scout Scan
+      uses: docker/scout-action@v1.0.9
+      with:
+        dockerhub-user: ${{ secrets.REPO_USER }}
+        dockerhub-password: ${{ secrets.REPO_PWD }}
+        command: quickview,cves
+        only-severities: critical,high
+        sarif-file: scout-report.sarif
+        json-file: scout-report.json
+
+    # Create human-readable TXT report
+    - name: Generate readable vulnerabilities report
+      run: |
+        if [ -f scout-report.json ]; then
+          jq -r '
+            .vulnerabilities[] |
+            "CVE: \(.cve)\nSeverity: \(.severity)\nPackage: \(.package)\nVersion: \(.version)\n----"
+          ' scout-report.json > scout-report.txt
+        else
+          echo "No vulnerabilities found" > scout-report.txt
+        fi
+
+    - name: Upload Docker Scout Artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: docker-scout-findings
+        path: |
+          scout-report.sarif
+          scout-report.json
+          scout-report.txt
