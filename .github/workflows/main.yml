@@ -54,20 +54,22 @@ jobs:
         docker info
 
     - name: Build Docker Image
-      run: docker build -f Dockerfile -t myapp:latest .
+  run: docker build -t myapp:latest .
 
-    # -------------------------
-    # Docker Scout Scan
-    # -------------------------
-    - name: Docker Scout Scan
-      uses: docker/scout-action@v1.0.9
-      with:
-        dockerhub-user: ${{ secrets.REPO_USER }}
-        dockerhub-password: ${{ secrets.REPO_PWD }}
-        command: quickview,cves
-        only-severities: critical,high
-        sarif-file: scout-report.sarif
-        json-file: scout-report.json
+- name: List Docker images
+  run: docker images
+
+- name: Docker Scout Scan
+  uses: docker/scout-action@v1.0.9
+  with:
+    dockerhub-user: ${{ secrets.REPO_USER }}
+    dockerhub-password: ${{ secrets.REPO_PWD }}
+    image: myapp:latest
+    command: quickview,cves
+    only-severities: critical,high
+    sarif-file: scout-report.sarif
+    json-file: scout-report.json
+
 
     # Create human-readable TXT report
     - name: Generate readable vulnerabilities report
